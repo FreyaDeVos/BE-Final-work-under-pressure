@@ -1,28 +1,46 @@
 const express = require('express');
-const {
-    createServer
-} = require('node:http');
-const {
-    join
-} = require('node:path');
-const socketIo = require('socket.io'); // Voeg dit toe
+const http = require('http');
+const socketIo = require('socket.io');
+const HRVReader = require('./hrvReader');
 
 const app = express();
-const server = createServer(app);
-const io = socketIo(server); // Voeg dit toe om de socket.io server te initialiseren
-
-app.get('/', (req, res) => {
-    res.sendFile(join(__dirname, 'index.html'));
+const server = http.createServer(app);
+const io = socketIo(server, {
+    cors: {
+        origin: '*'
+    }
 });
 
-// Verbind de client via Socket.io
+const hrvReader = new HRVReader();
+
+server.listen(3001, () => {
+    console.log('🌐 Server actief op http://localhost:3001');
+});
+
+hrvReader.start();
+
 io.on('connection', (socket) => {
-    console.log('a user connected');
-    socket.on('chat message', (msg) => {
-        console.log('message: ' + msg);
-    });
-});
+    console.log('🔌 Frontend verbonden via Socket.IO');
 
-server.listen(3000, () => {
-    console.log('server running at http://localhost:3000');
+    // Data doorsturen naar frontend
+    const onData = (data) => {
+        socket.emit('hrvData', data);
+    };
+
+    hrvReader.on('data', onData);
+
+    socket.on('disconnect', () => {
+        console.log('❌ Frontend losgekoppeld');
+        hrvReader.off('data', onData);
+    });
+
+    // Event voor start HRV reader
+    hrvReader.on('start', () => {
+        socket.emit('hrvStart');
+    });
+
+    // Event voor errors
+    hrvReader.on('error', (err) => {
+        socket.emit('hrvError', err.message);
+    });
 });
