@@ -27,7 +27,8 @@ io.on('connection', (socket) => {
     console.log('🔌 Frontend verbonden via Socket.IO');
 
     const onData = (data) => {
-        socket.emit('hrvData', data);
+        console.log('👉 Data naar frontend:', data); // ✅ voeg deze regel toe
+        io.emit('hrvData', data);
     };
 
     hrvReader.on('data', onData);

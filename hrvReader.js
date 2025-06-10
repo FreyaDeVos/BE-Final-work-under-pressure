@@ -8,6 +8,7 @@ class HRVReader extends EventEmitter {
     constructor() {
         super();
         this.isConnected = false;
+        this.rrBuffer = []; // Buffer voor RR-intervallen
     }
 
     start() {
@@ -21,7 +22,7 @@ class HRVReader extends EventEmitter {
         });
 
         noble.on('discover', (peripheral) => {
-            if (peripheral.advertisement.localName .includes('Polar')) {
+            if (peripheral.advertisement.localName ?.includes('Polar')) {
                 if (this.isConnected) return;
 
                 this.isConnected = true;
@@ -40,8 +41,6 @@ class HRVReader extends EventEmitter {
                             const hrChar = characteristics[0];
 
                             hrChar.on('data', (data) => {
-                                console.log('📦 Raw data:', data.toString('hex'));
-
                                 const flags = data.readUInt8(0);
                                 const rrPresent = (flags & 0x10) !== 0;
                                 let hr;
@@ -64,27 +63,30 @@ class HRVReader extends EventEmitter {
                                     }
                                 }
 
-                                const pseudoHRV = rrIntervals.length >= 2 ?
-                                    standardDeviation(rrIntervals) :
-                                    0;
+                                const rrToUse = rrIntervals.length > 0 ?
+                                    rrIntervals : [Math.round(60000 / hr)]; // Pseudo-RR
 
-                                const hrvScore100 = pseudoHRV > 0 ?
-                                    Math.min(100, Math.max(0, (pseudoHRV - 10) * 3)) :
-                                    0;
+                                // Voeg nieuwe RR's toe aan buffer
+                                this.rrBuffer.push(...rrToUse);
 
-                                // Als geen echte RR-data aanwezig is, genereer 1 pseudo-RR op basis van HR
-                                const rrToSend = rrIntervals.length > 0 ?
-                                    rrIntervals :
-                                    [Math.round(60000 / hr)]; // Pseudo RR
+                                // Beperk tot laatste 20
+                                if (this.rrBuffer.length > 50) { // Of 150-200
+                                    this.rrBuffer = this.rrBuffer.slice(-100);
+                                }
+
+                                // Alleen doorgaan als genoeg RR's
+                                let rmssd = 0;
+                                if (this.rrBuffer.length >= 2) {
+                                    rmssd = calculateRMSSD(this.rrBuffer);
+                                }
 
                                 this.emit('data', {
                                     hr,
-                                    rrIntervals: rrToSend
+                                    rrIntervals: rrToUse,
+                                    rmssd
                                 });
 
-                                console.log(`❤️ HR: ${hr}, 🧠 RR: ${rrToSend.join(', ')}`);
-
-                                console.log(`❤️ HR: ${hr}, 🧠 RR: ${rrIntervals.length > 0 ? rrIntervals.join(', ') : 'geen'}`);
+                                console.log(`❤️ HR: ${hr}, 🧠 RR: ${rrToUse.join(', ')}, 💓 RMSSD: ${rmssd.toFixed(2)}`);
                             });
 
                             hrChar.subscribe((err) => {
@@ -105,10 +107,17 @@ class HRVReader extends EventEmitter {
     }
 }
 
-function standardDeviation(arr) {
-    const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
-    const variance = arr.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / arr.length;
-    return Math.sqrt(variance);
+// RMSSD = root mean square of successive differences
+function calculateRMSSD(rrs) {
+    if (rrs.length < 2) return 0;
+
+    let sumSquares = 0;
+    for (let i = 1; i < rrs.length; i++) {
+        const diff = rrs[i] - rrs[i - 1];
+        sumSquares += diff * diff;
+    }
+
+    return Math.sqrt(sumSquares / (rrs.length - 1));
 }
 
 module.exports = HRVReader;
